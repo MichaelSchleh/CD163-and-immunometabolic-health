@@ -1,0 +1,426 @@
+---
+title: "Deficiency of the hemoglobin-haptoglobin receptor, CD163, worsens insulin sensitivity in obese male mice"
+author: "Michael Schleh"
+date: "7/26/2024"
+Journal: "Diabetes"
+---
+
+# In this vignette
+  
+# In this vignette, we will be taking raw counts output from bulk RNASequencing of Bone-marrow derived macrophages (BMDMs)
+# that remained unpolarized (M0), polarized to a pro-inflammatory state (M1-like), or an anti-inflammatory state (M2-like).
+# 
+# 1. Setup library and call in dataframes and create metadata file.
+# 2. Create binomial generalized linear models from raw count data using DESeq2 package, and define levels of comparison.
+# 3. Perform differential expression analysis
+# 4. Figure generation
+
+
+#1. Setup library and call in dataframes and create metadata file.----
+#Library
+library(gplots)
+library(calibrate)
+library(DESeq2)
+library(dplyr)
+library(tidyverse)
+library(apeglm)
+library(ggrepel)
+library(ggConvexHull)
+library(vsn)
+library(RColorBrewer)
+library(reshape2)
+library("textshape")
+library(AnnotationHub)
+library(org.Mm.eg.db)
+library(tibble)
+library("DOSE")
+library("enrichplot")
+library("EnhancedVolcano")
+library(rstatix)
+library(ggpubr)
+library(ggforce)
+
+#Set your working directory and create the directory structure
+setwd("CHOOSE SOURCE DATA")
+
+
+#Build the count matrix and DESeq matrix
+countdata <- read.csv("CHOOSE FILE.csv", header=TRUE, row.names=1)
+countdata <- as.matrix(countdata)
+
+polarization <- factor(c(rep("M0",4), rep("M1",4), rep("M2",4),rep("MMe1",4),rep("MMe4",4),rep("M0",3),rep("M1",3),rep("M2",3),rep("MMe1",3)))
+genotype <- factor(c(rep("WT",20),rep("KO",12)))
+coldata <- data.frame(row.names=colnames(countdata),polarization,genotype)
+
+#2. Create binomial generalized linear models from raw count data using DESeq2 package, and define levels of comparison.
+dds <- DESeqDataSetFromMatrix(countData = countdata, colData = coldata, design=~ polarization)
+dds$group <- factor(paste0(dds$polarization, dds$genotype))
+design(dds) <- ~ group
+dds$group <- relevel(dds$group, ref="M0WT") #Default = set to M0WT, change accordingly
+dds <- DESeq(dds)
+
+
+# 3. Perform differential expression analysis
+resultsNames(dds)
+res_M0KO_vs_M0WT <- lfcShrink(dds,coef="group_M0KO_vs_M0WT",type="apeglm")
+table(res_M0KO_vs_M0WT$padj<0.05)
+res_M0KO_vs_M0WT <- res_M0KO_vs_M0WT[order(res_M0KO_vs_M0WT$padj), ]
+
+res_M1KO_vs_M0WT <- lfcShrink(dds,coef="group_M1KO_vs_M0WT",type="apeglm")
+table(res_M1KO_vs_M0WT$padj<0.05)
+res_M1KO_vs_M0WT <- res_M1KO_vs_M0WT[order(res_M1KO_vs_M0WT$padj), ]
+
+res_M2KO_vs_M0WT <- lfcShrink(dds,coef="group_M2KO_vs_M0WT",type="apeglm")
+table(res_M2KO_vs_M0WT$padj<0.05)
+res_M2KO_vs_M0WT <- res_M2KO_vs_M0WT[order(res_M2KO_vs_M0WT$padj), ]
+
+
+#Annotate results object with gene symbols
+res_M0KO_vs_M0WT$symbols  <- mapIds(org.Mm.eg.db, keys= rownames(res_M0KO_vs_M0WT), column= "SYMBOL", keytype= "ENSEMBL", multiVals="first")
+res_M0KO_vs_M0WT <- data.frame(Ensemble=rownames(res_M0KO_vs_M0WT),
+                               res_M0KO_vs_M0WT)
+
+res_M1KO_vs_M1WT$symbols  <- mapIds(org.Mm.eg.db, keys= rownames(res_M1KO_vs_M1WT), column= "SYMBOL", keytype= "ENSEMBL", multiVals="first")
+res_M1KO_vs_M1WT <- data.frame(Ensemble=rownames(res_M1KO_vs_M1WT),
+                               res_M1KO_vs_M1WT)
+
+res_M2KO_vs_M2WT$symbols  <- mapIds(org.Mm.eg.db, keys= rownames(res_M2KO_vs_M2WT), column= "SYMBOL", keytype= "ENSEMBL", multiVals="first")
+res_M2KO_vs_M2WT <- data.frame(Ensemble=rownames(res_M2KO_vs_M2WT),
+                               res_M2KO_vs_M2WT)
+
+#Write results to an excel file
+write.csv(res_M0KO_vs_M0WT, file="DEresults_M0KOvsM0WT.csv")
+write.csv(res_M1KO_vs_M1WT, file="DEresults_M1KO_vs_M1WT.csv")
+write.csv(res_M2KO_vs_M2WT, file="DEresults_M2KO_vs_M2WT.csv")
+
+#Set thresholds for differentially upregulated genes and make directories
+padj_cutoff <- 0.05
+fc_UP <- 1.5
+fc_DOWN <- -1.5
+
+#Create files containing only upregulated DEGs
+res_M0KO_vs_M0WT_DEGs <- res_M0KO_vs_M0WT %>% data.frame() %>% as_tibble() 
+res_M0KO_vs_M0WT_DEGs_UP <- res_M0KO_vs_M0WT_DEGs %>% filter(padj < padj_cutoff) %>% filter(log2FoldChange > fc_UP)
+write.csv(res_M0KO_vs_M0WT_DEGs_UP, file="DEGs_UP_M0KO_vs_M0WT.csv")
+
+#M1WT vs. M1KO
+M1KO_vs_M1WT_DEGs_UP <- res_M1KO_vs_M1WT %>% data.frame() %>% as_tibble() 
+M1KO_vs_M1WT_DEGs_UP <- M1KO_vs_M1WT_DEGs_UP %>% filter(padj < padj_cutoff) %>% filter(log2FoldChange > fc_UP)
+write.csv(M1KO_vs_M1WT_DEGs_UP, file="DEGs_UP_M1KO_vs_M1WT.csv")
+
+#M2WT vs. M2KO
+M2KO_vs_M2WT_DEGs_UP <- res_M2KO_vs_M2WT %>% data.frame() %>% as_tibble() 
+M2KO_vs_M2WT_DEGs_UP <- M2KO_vs_M2WT_DEGs_UP %>% filter(padj < padj_cutoff) %>% filter(log2FoldChange > fc_UP)
+write.csv(M2KO_vs_M2WT_DEGs_UP, file="DEGs/UP/M2KO_vs_M2WT_DEGs_UP.csv")
+
+#Create files containing only downregulated DEGs
+res_M0KO_vs_M0WT_DEGs_DOWN <- res_M0KO_vs_M0WT_DEGs %>% filter(padj < padj_cutoff) %>% filter(log2FoldChange < fc_DOWN)
+write.csv(res_M0KO_vs_M0WT_DEGs_DOWN, file="DEGs/DOWN/DEGs_DOWN_M0KOvsM0WT.csv")
+
+
+
+#TARGETED_WT.vs.KO
+DEGs_DOWN_M0KO_vs_M0WT <- res_M0KO_vs_M0WT_DEGs %>% data.frame() %>% as_tibble() 
+DEGs_DOWN_M0KO_vs_M0WT <- DEGs_DOWN_M0KO_vs_M0WT %>% filter(padj < padj_cutoff) %>% filter(log2FoldChange < fc_DOWN)
+write.csv(DEGs_DOWN_M0KO_vs_M0WT, file="DEGs_DOWN_M0KO_vs_M0WT.csv")
+
+DEGs_DOWN_M1KO_vs_M1WT <- res_M1KO_vs_M1WT %>% data.frame() %>% as_tibble() 
+DEGs_DOWN_M1KO_vs_M1WT <- DEGs_DOWN_M1KO_vs_M1WT %>% filter(padj < padj_cutoff) %>% filter(log2FoldChange < fc_DOWN)
+write.csv(DEGs_DOWN_M1KO_vs_M1WT, file="DEGs_DOWN_M1KO_vs_M1WT.csv")
+
+DEGs_DOWN_M2KO_vs_M2WT <- res_M2KO_vs_M2WT %>% data.frame() %>% as_tibble() 
+DEGs_DOWN_M2KO_vs_M2WT <- DEGs_DOWN_M2KO_vs_M2WT %>% filter(padj < padj_cutoff) %>% filter(log2FoldChange < fc_DOWN)
+write.csv(DEGs_DOWN_M2KO_vs_M2WT, file="DEGs/DOWN/DEGs_DOWN_M2KO_vs_M2WT.csv")
+
+
+
+#Figure 4B:  PCA PLOT
+vst <- vst(dds)
+intgroup=c("genotype","polarization")
+
+# Principal components analysis, Default is set up to M0 polarization
+PCAdata1 <- plotPCA(vst,intgroup=c("genotype","polarization"),returnData = TRUE)
+percentVar <- round(100 * attr(PCAdata1, "percentVar")) 
+
+ggplot(PCAdata1, aes(x = PC1, y = PC2, shape = genotype.M2, color = genotype.M2,label=rownames(PCAdata1),fill=genotype.M2)) + 
+  geom_mark_ellipse(aes(fill = genotype.M2,
+                       color = genotype.M2,
+                       label=NULL)) +
+  geom_point(size =6,fill="white") +
+  scale_shape_manual(values=c(22,21)) + 
+  scale_fill_manual(values=c("#FF7F03","#2078B4")) + 
+  scale_color_manual(values=c("#FF7F03","#2078B4")) + 
+  scale_x_continuous(limits=c(-55,60)) +
+  scale_y_continuous(limits=c(-30,30)) +
+  xlab(paste0("PC1: ", percentVar[1], "% variance")) + 
+  ylab(paste0("PC2: ", percentVar[2], "% variance")) + 
+  ggtitle("PCA: M0 Polarization") +
+  theme(plot.title = element_text(hjust=0.5,size=20,face="bold"),
+        axis.text = element_text(size=20,color="black"),
+        axis.title = element_text(size=20,color="black"),
+        axis.line = element_line(size=1),
+        legend.position = "none",
+        panel.background = element_blank())
+
+#Create MA Plots for each comparison (not shown in manuscript)
+png("MA_Plots/MA_M0KOvsM0WT.png", pointsize=20)
+DESeq2::plotMA(res_M0KO_vs_M0WT, ylim=c(-3,3), main = "MA Plot for M0K0 vs M0WT")
+dev.off()
+
+png("MA_Plots/MA_M1KOvsM0WT.png", pointsize=20)
+DESeq2::plotMA(res_M1KO_vs_M1WT, ylim=c(-3,3), main = "MA Plot for M1K0 vs M0WT")
+dev.off()
+
+png("MA_Plots/MA_M2KOvsM0WT.png", pointsize=20)
+DESeq2::plotMA(res_M2KO_vs_M2WT, ylim=c(-3,3), main = "MA Plot for M2K0 vs M0WT")
+dev.off()
+
+#Figure 4C - Create Volcano Plots for each comparison
+
+
+#M0 Polarization
+#Modify Color
+keyvals.colour <- ifelse(
+  res_M0KO_vs_M0WT$log2FoldChange < -1, "#2078B4",
+  ifelse(res_M0KO_vs_M0WT$log2FoldChange > 1, "#FF7F03",
+         ''))
+keyvals.colour[is.na(keyvals.colour)] <- 'white'
+names(keyvals.colour)[keyvals.colour == "#FF7F03"] <- 'high'
+names(keyvals.colour)[keyvals.colour == 'white'] <- 'mid'
+names(keyvals.colour)[keyvals.colour == "#2078B4"] <- 'low'
+
+
+EnhancedVolcano(res_M0KO_vs_M0WT,
+                lab = res_M0KO_vs_M0WT$symbols,
+                selectLab = c('Itgax','Ly6a','Il17ra','Nlrp3','Agpat2','Tgfb1','Slco2b1','Cd163','Gzme','Il27ra','CEP112','Galnt9',
+                              'Btbd17','Ccr5','Akt1','Trem2','Cd46','Ccr1'),
+                x='log2FoldChange',
+                y='pvalue',
+                xlab = bquote(~Log[2]~ 'fold change'),
+                xlim = c(-0.01,0.01),
+                ylab = bquote(~-Log[10]~adjusted~italic(P)),
+                pCutoff = 0.05, 
+                drawConnectors = TRUE,
+                min.segment.length = 1,
+                widthConnectors = 0.5,
+                typeConnectors = "closed",
+                colCustom = keyvals.colour,
+                legendPosition = 'none',
+                gridlines.major = FALSE,
+                caption = NULL,
+                title=NULL,
+                labSize = 2,
+                subtitle = NULL,
+                boxedLabels = TRUE,
+                lengthConnectors = unit(0, "npc"),
+                FCcutoff = 0.9,
+                shape = 21,
+                titleLabSize = 12,
+                axisLabSize = 12,
+                legendIconSize = 4)
+
+#M1 polarization
+
+#Modify Color
+keyvals.colour <- ifelse(
+  res_M1KO_vs_M1WT$log2FoldChange < -1, "#2078B4",
+  ifelse(res_M1KO_vs_M1WT$log2FoldChange > 1, "#FF7F03",
+         ''))
+keyvals.colour[is.na(keyvals.colour)] <- 'white'
+names(keyvals.colour)[keyvals.colour == "#FF7F03"] <- 'high'
+names(keyvals.colour)[keyvals.colour == 'white'] <- 'mid'
+names(keyvals.colour)[keyvals.colour == "#2078B4"] <- 'low'
+
+
+EnhancedVolcano(res_M1KO_vs_M1WT,
+                lab = res_M1KO_vs_M1WT$symbols,
+                selectLab = c('Itgax','Ly6a','Il17ra','Nlrp3','Agpat2','Tgfb1','Slco2b1','Cd163','Gzme','Il27ra','CEP112','Galnt9',
+                              'Btbd17','Ccr5','Akt1','Trem2','Cd46','Ccr1'),
+                x='log2FoldChange',
+                y='pvalue',
+                xlab = bquote(~Log[2]~ 'fold change'),
+                #xlim = c(-5,5),
+                #ylim= c(0,15),
+                #col=c('black', 'gray', 'gray', 'red'),
+                ylab = bquote(~-Log[10]~adjusted~italic(P)),
+                pCutoff = 0.05, 
+                drawConnectors = TRUE,
+                min.segment.length = 1,
+                widthConnectors = 0.5,
+                typeConnectors = "closed",
+                colCustom = keyvals.colour,
+                legendPosition = 'none',
+                gridlines.major = FALSE,
+                caption = NULL,
+                title=NULL,
+                labSize = 2,
+                subtitle = NULL,
+                boxedLabels = TRUE,
+                lengthConnectors = unit(0, "npc"),
+                FCcutoff = 0.9,
+                shape = 21,
+                titleLabSize = 12,
+                axisLabSize = 12,
+                legendIconSize = 4)
+ggsave(filename="EnhancedVolcano_M1.png", height=3.5,width=3.5,units="in",dpi=300,path=path)
+
+#M2 polarization
+
+keyvals.colour <- ifelse(
+  res_M2KO_vs_M2WT$log2FoldChange < -1, "#2078B4",
+  ifelse(res_M2KO_vs_M2WT$log2FoldChange > 1, "#FF7F03",
+         ''))
+keyvals.colour[is.na(keyvals.colour)] <- 'white'
+names(keyvals.colour)[keyvals.colour == "#FF7F03"] <- 'high'
+names(keyvals.colour)[keyvals.colour == 'white'] <- 'mid'
+names(keyvals.colour)[keyvals.colour == "#2078B4"] <- 'low'
+
+EnhancedVolcano(res_M2KO_vs_M2WT,
+                lab = res_M2KO_vs_M2WT$symbols,
+                selectLab = c('Il17ra','Nlrp3','Cxcl2','Tnf','Hebp1','Cd163','Trem1','Tlr2','Ccl2','Il27','Cd14','Slc40a1','Cisd1','Il1rn','Trf','Cx3cr1',
+                              'Slc11a2','Tfrc','Egr2','Trf','Hmox1','Hebp2','Mcf2l','Pilrb2','Pilra','Arg1','Casp6'),
+                x='log2FoldChange',
+                y='padj',
+                xlab = bquote(~Log[2]~ 'fold change'),
+                #xlim = c(-5,5),
+                ylim= c(0,15),
+                #col=c('black', 'gray', 'gray', 'red'),
+                ylab = bquote(~-Log[10]~adjusted~italic(P)),
+                pCutoff = 0.05, 
+                drawConnectors = TRUE,
+                min.segment.length = 1,
+                widthConnectors = 0.5,
+                typeConnectors = "closed",
+                colCustom = keyvals.colour,
+                legendPosition = 'none',
+                gridlines.major = FALSE,
+                caption = NULL,
+                title=NULL,
+                labSize = 2,
+                subtitle = NULL,
+                boxedLabels = TRUE,
+                lengthConnectors = unit(0, "npc"),
+                FCcutoff = 0.9,
+                shape = 21,
+                titleLabSize = 12,
+                axisLabSize = 12,
+                legendIconSize = 4)
+ggsave(filename="EnhancedVolcano_M2.png", height=3.5,width=3.5,units="in",dpi=300,path=path)
+dev.off()
+
+#Figure 4D - DAVID Variable String
+#M1 Polarization
+
+DAVID_UP <- read.delim("DAVID_UP_M1WT.v.M1KO.txt")
+DAVID_DOWN <- read.delim("DAVID_DOWN_M1WT.v.M1KO.txt")
+
+DAVID <- rbind.data.frame(
+  data.frame(DAVID_UP[c(1:6),] %>% filter(FDR<0.05),
+             Direction="Up"),
+  data.frame(DAVID_DOWN[1:4,] %>% filter(FDR<0.05),
+             Direction="Down"))
+
+DAVID <- data.frame(DAVID,
+                    FDR.NEW=ifelse(DAVID$Direction=="Down",(-log(DAVID$FDR)*-1),-log(DAVID$FDR)))
+
+DAVID[c('GO', 'Term')] <- str_split_fixed(DAVID$Term, '~', 2)
+
+ggplot(DAVID, aes(x=FDR.NEW,y=reorder(Term,FDR.NEW))) +
+  geom_segment(aes(yend = reorder(Term,FDR.NEW), xend = 0),color ="black",size=0.8,alpha=0.5) +
+  geom_point(aes(size=Count,fill=Direction),shape=21,color="black") +
+  labs(x=bquote(~-log[10]~ 'FDR'),
+       title="GO Biological process: M2 poliarzation") +
+  scale_fill_manual(values=c("#2078B4","#FF7F03")) +
+  geom_vline(xintercept = 0,color="black",size=1) +
+  theme(plot.title = element_blank(),
+        axis.text = element_text(size=12,color="black"),
+        axis.title = element_text(size=12,color="black"),
+        axis.title.y = element_blank(),
+        axis.line = element_line(size=1),
+        legend.position = "right",
+        panel.background = element_blank()) +
+  facet_grid(factor(Direction,levels=c("Up","Down")) ~ ., scales = "free_y", space = "free_y")
+
+#M2 Polarization
+DAVID_UP <- read.delim("DAVID_UP_M2WT.v.M2KO.txt")
+DAVID_DOWN <- read.delim("DAVID_DOWN_M2WT.v.M2KO.txt")
+
+DAVID <- rbind.data.frame(
+  data.frame(DAVID_UP[c(1:10),] %>% filter(FDR<0.05),
+             Direction="Up"),
+  data.frame(DAVID_DOWN[1:10,] %>% filter(FDR<0.05),
+             Direction="Down"))
+
+DAVID <- data.frame(DAVID,
+                    FDR.NEW=ifelse(DAVID$Direction=="Down",(-log(DAVID$FDR)*-1),-log(DAVID$FDR)))
+
+DAVID[c('GO', 'Term')] <- str_split_fixed(DAVID$Term, '~', 2)
+
+ggplot(DAVID, aes(x=FDR.NEW,y=reorder(Term,FDR.NEW))) +
+  geom_segment(aes(yend = reorder(Term,FDR.NEW), xend = 0),color ="black",size=0.8,alpha=0.5) +
+  geom_point(aes(size=Count,fill=Direction),shape=21,color="black") +
+  labs(x=bquote(~-log[10]~ 'FDR'),
+       title="GO Biological process: M2 poliarzation") +
+  scale_fill_manual(values=c("#2078B4","#FF7F03")) +
+  geom_vline(xintercept = 0,color="black",size=1) +
+  theme(plot.title = element_text(hjust=0,size=16,face="bold"),
+        axis.text = element_text(size=12,color="black"),
+        axis.title = element_text(size=12,color="black"),
+        axis.title.y = element_blank(),
+        axis.line = element_line(size=1),
+        legend.position = "right",
+        panel.background = element_blank()) +
+  facet_grid(factor(Direction,levels=c("Up","Down")) ~ ., scales = "free_y", space = "free_y")
+
+
+
+
+#Figure 4F. Heatmaps constructing "Innate Immune Metabolism (GO0045087) and iron transport (GO0006826)
+#Build the count dataframe 
+countdata <- read.csv("CHOOSE DATA", header=TRUE)
+colnames(countdata)[1] <- "ENSEMBL"
+countdata$symbols  <- mapIds(org.Mm.eg.db, keys= countdata$ENSEMBL, column= "SYMBOL", keytype= "ENSEMBL", multiVals="first")
+
+Innate.Immune <- c("Cx3cr1","Il17ra","Trem1","Trem2","Fcgr1","Nlrp3","Clec4e","Smpdl3b","Trim30b","Ccl2",
+                   "Tlr2","Irf7","Oasl1","Ccl4","Oas3","Cd14","Cxcl16","Ccl3","Isg15","Rab20","Ifit3",
+                   "Oasl2","Coro1a","Ifit1","Hck","Ccl2","Ifit2","Cgas","Apobec3","Clec4n","Isg20","Mx2",
+                   "Slc11a1","C3","Dhx58","Stx11","Clec4d","Il27","Zbp1","Clec5a","Bst2","Nlrc5","Oas1g","Cxcl5")
+
+Iron.Transport <- c('Adipoq','Abcb6','Abcb7','Abcc5','Arhgap1','Atp6v0b','Atp6v0d1','Atp6v0e',
+                    'Atp6v1a','Atp6v1b2','Atp6v1f','Atp7a','B2m','Cisd1','Cisd2','Dnm2','Cltc',
+                    'Cp','Egln1','Egln2','Epas1','Fdx1','Fdxacb1','Fdxr','Fech','Frrs1','Flvcr1',
+                    'Flvcr2','Fth1','Ftl1','Ftmt','Hebp1','Hmox1','Hamp','Hamp2','Heph','Hephl1','Hfe','Hpx','Hrg',
+                    'Inhca','Iscu','Lcn2','Lmtk2','Ltf','Mmgt1','Myo1b','Nectin1','Nos1','Pgrmc2','Rab11b','Rep15',
+                    'Scara5','Sfxn1','Slc11a1','Slc11a2','Slc22a17','Slc25a28','Slc25a37','Slc39a8','Slc39a14','Slc40a1','Slc46a1','Slc48a1','Snx3',
+                    'Steap1','Steap2','Steap3','Steap4','Tfr2','Tfrc','Timd2','Trf','Cd163','Hebp2')
+
+
+res_M2KO_vs_M2WT2 <- res_M2KO_vs_M2WT %>% filter(symbols %in% Iron.Transport)
+countdata <- countdata %>% filter(symbols %in% Iron.Transport)
+
+colnames(countdata) <- c("ENSEMBL","MKA1","MKA2","MKA3","MKA4","MKA5","MKA6","MKA7","MKA8","MKA9","MKA10","MKA11","MKA12","MKA13","MKA14","MKA15","MKA16","MKA17",
+                             "MKA18","MKA19","MKA20","MKA21","MKA22","MKA23","MKA24","MKA25","MKA26","MKA27","MKA28","MKA29","MKA30","MKA31","MKA32","symbols")
+
+countdata <- countdata %>% dplyr::select("ENSEMBL","MKA9","MKA10","MKA11","MKA12","MKA27","MKA28","MKA29","symbols")
+colnames(countdata) <- c("ENSEMBL","WT01","WT02","WT03","WT04","KO01","KO02","KO03","symbols")
+countdata <- left_join(countdata,res_M2KO_vs_M2WT2[,c(3,6:7)],by="symbols")
+countdata <- countdata %>% filter(padj!="NA")
+
+countdata <- countdata %>% arrange(padj)
+countdata[2:8] <- t(scale(t(countdata[2:8]), center = TRUE, scale = TRUE))
+countdata <- melt(countdata[-1],id.vars = c("symbols",'log2FoldChange',"padj"))
+colnames(countdata) <- c("symbol",'log2FoldChange',"padj","variable","Z.score")
+countdata <- countdata %>% filter(padj<0.05)
+
+ggplot(countdata, aes(x=reorder(symbol,log2FoldChange), y = variable, fill = Z.score)) +
+  geom_tile(color = "black") +
+    labs(x="",
+         title="M2 Polarization
+  Iron Transport GO:0006826",
+        y="") +
+  coord_flip() +
+  scale_x_discrete(limits=rev) +
+  scale_fill_gradient2(low = "#075AFF",mid = "#FFFFCC",high = "#FF0000") +
+  theme(axis.text = element_text(color="black",),
+        axis.text.x = element_text(angle=90,vjust = 0.5, hjust=1))
+        #plot.title=element_text(hjust=0.5,face="bold"))
